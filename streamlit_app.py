@@ -1,4 +1,4 @@
-import streamlit as st 
+import streamlit as st
 import streamlit.components.v1 as components
 
 # App Title
@@ -69,6 +69,6 @@ if "page" in st.session_state and st.session_state["page"] == "optimization":
         st.write(f"**Historical Time Period:** {time_period} years")
         st.write(f"**Prediction Time Period:** {prediction_period} months")
         st.success("Portfolio optimization will be implemented here!")
-st.write("---")
-st.write("Developed by: Paige Spencer, Ian Ortega, Nabil Othman, Chris Giamis")"
 
+st.write("---")
+st.write("Developed by: Paige Spencer, Ian Ortega, Nabil Othman, Chris Giamis")
