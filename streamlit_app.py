@@ -1,141 +1,185 @@
-import sys
-import os
+import streamlit as st
+import yfinance as yf
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize
 
-# Ensure required packages are installed
-try:
-    import yfinance as yf
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from scipy.optimize import minimize
-    import streamlit as st
-except ImportError:
-    os.system(f"{sys.executable} -m pip install yfinance pandas numpy matplotlib scipy streamlit")
-    import yfinance as yf
-    import pandas as pd
-    import numpy as np
-    import matplotlib.pyplot as plt
-    from scipy.optimize import minimize
-    import streamlit as st
+# Ensure compatibility with Streamlit
+plt.switch_backend('Agg')
 
-# Streamlit App Title
-st.title("Portfolio Optimization")
+# Centered App Title
+st.markdown("<h1 style='text-align: center;'>📈 Smart Portfolio Optimization</h1>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center;'>Optimize your investment portfolio using Modern Portfolio Theory.</div>", unsafe_allow_html=True)
+st.markdown("")
+st.markdown("")
+st.markdown("")
 
-# Background Styling
-st.markdown(
-    """
+# Initialize Session State for Review Log
+if "review_log" not in st.session_state:
+    st.session_state.review_log = []
+
+# User Input Fields (Centered)
+st.markdown("<b>Enter your stock tickers:</b>", unsafe_allow_html=True)
+tickers = st.text_area("", value="AAPL, MSFT, GOOGL, AMZN, TSLA").strip()
+
+st.markdown("<b>Enter your investment amount:</b>", unsafe_allow_html=True)
+principal = st.number_input("", min_value=0.0, value=100.0, step=100.0)
+
+# Centering and resizing the Optimize Portfolio button
+st.markdown("""
     <style>
-        body {
-            background: url('https://source.unsplash.com/1600x900/?finance,technology') no-repeat center center fixed;
-            background-size: cover;
-            color: white;
-            text-align: center;
-        }
-        .main-title {
-            font-size: 48px;
-            font-weight: bold;
-            color: #00FFAA;
-        }
-        .sub-text {
-            font-size: 24px;
-            color: #FFD700;
+        .stButton>button {
+            width: 100%;
         }
     </style>
-    """,
-    unsafe_allow_html=True
-)
+""", unsafe_allow_html=True)
+optimize_button = st.button("Optimize Portfolio")
 
-# Image Header
-st.image("https://source.unsplash.com/800x400/?stocks,market", use_container_width=True)
+# Function to Fetch Stock Data
+def fetch_data(tickers, start_date, end_date):
+    return yf.download(tickers, start=start_date, end=end_date)['Close']
 
-# Sidebar Inputs
-st.sidebar.header("User Inputs")
-principal = st.sidebar.number_input("Enter Principal Capital ($)", min_value=0.0, value=1000.0, step=100.0)
-tickers = st.sidebar.text_area("Enter Stock Tickers (comma-separated)").upper()
-optimize_button = st.sidebar.button("Optimize Portfolio")
+# Function to Calculate Portfolio Performance
+def portfolio_performance(weights, returns):
+    portfolio_return = np.sum(returns.mean() * weights) * 252
+    portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
+    return portfolio_return, portfolio_volatility
 
-# Optimization Method Selection
-st.header("1. Portfolio Input")
-st.write("Enter the stocks you want to optimize and set your principal capital.")
+# Function to Optimize Portfolio
+def optimize_portfolio(returns, risk_free_rate):
+    num_assets = len(returns.columns)
+    constraints = ({'type': 'eq', 'fun': lambda x: np.sum(x) - 1})
+    bounds = tuple((0, 1) for _ in range(num_assets))
+    result = minimize(negative_sharpe_ratio, num_assets * [1. / num_assets], args=(returns, risk_free_rate),
+                      method='SLSQP', bounds=bounds, constraints=constraints)
+    return result
 
-st.header("2. Optimization Method")
-optimization_method = st.selectbox("Choose Optimization Method:", [
-    "Markowitz Portfolio Theory",
-    "Efficient Frontier",
-    "Monte Carlo Simulation",
-    "Gaussian Copula Simulation",
-    "Auto-regression Gaussian Copula Simulation"
-])
+# Function to Calculate Negative Sharpe Ratio
+def negative_sharpe_ratio(weights, returns, risk_free_rate):
+    p_ret, p_vol = portfolio_performance(weights, returns)
+    return -(p_ret - risk_free_rate) / p_vol
 
-st.header("3. Simulation Settings")
-time_period = st.slider("Select historical time period (years):", 1, 10, 1)
-prediction_period = st.slider("Select prediction time period (months):", 1, 24, 1)
-
-# Run Optimization
-if optimize_button and tickers:
-    stock_list = [ticker.strip() for ticker in tickers.split(",")]
-
-    # Fetch historical data
-    st.write("### Fetching Data...")
-    try:
-        data = yf.download(stock_list, period=f"{time_period}y")['Close']
-        returns = data.pct_change().dropna()
-
-        # Fetch risk-free rate (10-year treasury yield)
-        treasury_yield = yf.Ticker("^TNX")
-        treasury_data = treasury_yield.history(period="1d")
-        risk_free_rate = treasury_data['Close'].iloc[-1] / 100 if not treasury_data.empty else 0.02  # Default to 2%
-
-        # Calculate Annualized Returns & Volatility
-        annual_returns = returns.mean() * 252
-        annual_volatility = returns.std() * np.sqrt(252)
-
-        # Portfolio Performance Calculation
-        def portfolio_performance(weights, returns):
-            portfolio_return = np.sum(returns.mean() * weights) * 252
-            portfolio_volatility = np.sqrt(np.dot(weights.T, np.dot(returns.cov() * 252, weights)))
-            return portfolio_return, portfolio_volatility
-
-        # Objective Function (Negative Sharpe Ratio)
-        def negative_sharpe_ratio(weights, returns, risk_free_rate):
-            portfolio_return, portfolio_volatility = portfolio_performance(weights, returns)
-            sharpe_ratio = (portfolio_return - risk_free_rate) / portfolio_volatility
-            return -sharpe_ratio
-
-        # Portfolio Optimization
-        num_assets = len(stock_list)
-        weights = np.random.random(num_assets)
+# Function to Plot Efficient Frontier
+def plot_efficient_frontier(returns, risk_free_rate):
+    num_portfolios = 10000
+    results = np.zeros((3, num_portfolios))
+    weights_record = []
+    for i in range(num_portfolios):
+        weights = np.random.random(len(returns.columns))
         weights /= np.sum(weights)
-        constraints = ({'type': 'eq', 'fun': lambda w: np.sum(w) - 1})
-        bounds = tuple((0, 1) for _ in range(num_assets))
+        weights_record.append(weights)
+        portfolio_return, portfolio_volatility = portfolio_performance(weights, returns)
+        results[0, i] = portfolio_volatility
+        results[1, i] = portfolio_return
+        results[2, i] = (portfolio_return - risk_free_rate) / portfolio_volatility
+    return results, weights_record
 
-        result = minimize(negative_sharpe_ratio, weights, args=(returns, risk_free_rate),
-                          method='SLSQP', bounds=bounds, constraints=constraints)
+# Main Functionality
+if optimize_button:
+    ticker_list = [ticker.strip() for ticker in tickers.split(',')]
+    data = fetch_data(ticker_list, '2020-01-01', '2024-01-01')
+    returns = data.pct_change().dropna()
 
-        # Optimized Portfolio Weights
-        optimized_weights = result.x
-        optimized_return, optimized_volatility = portfolio_performance(optimized_weights, returns)
-        optimized_sharpe_ratio = (optimized_return - risk_free_rate) / optimized_volatility
+    # Fetch Risk-Free Rate (10-year US Treasury yield)
+    treasury_yield = yf.Ticker("^TNX")
+    treasury_data = treasury_yield.history(start="2020-01-01", end="2024-01-01")
+    risk_free_rate = treasury_data['Close'].iloc[-1] / 100
 
-        # Display Results
-        st.success("Portfolio Optimization Complete!")
-        st.write(f"**Optimized Expected Annual Return:** {optimized_return:.2%}")
-        st.write(f"**Optimized Portfolio Volatility:** {optimized_volatility:.2%}")
-        st.write(f"**Optimized Sharpe Ratio:** {optimized_sharpe_ratio:.2f}")
+    # Optimize Portfolio
+    optimized_result = optimize_portfolio(returns, risk_free_rate)
+    optimized_weights = optimized_result.x
+    optimized_return, optimized_volatility = portfolio_performance(optimized_weights, returns)
+    optimized_sharpe_ratio = (optimized_return - risk_free_rate) / optimized_volatility
 
-        # Show optimized weights
-        st.write("### Optimized Portfolio Weights:")
-        for i, weight in enumerate(optimized_weights):
-            st.write(f"**{stock_list[i]}:** {weight:.2%}")
+    # Sort Allocations in Descending Order
+    sorted_indices = np.argsort(optimized_weights)[::-1]
+    sorted_tickers = [ticker_list[i] for i in sorted_indices]
+    sorted_weights = optimized_weights[sorted_indices]
 
-        # Plot Portfolio Allocation
-        fig, ax = plt.subplots()
-        ax.pie(optimized_weights, labels=stock_list, autopct="%1.1f%%", startangle=140)
-        ax.axis("equal")
-        st.pyplot(fig)
+    # Pie Chart - Portfolio Allocation
+    st.header("📊 Optimized Portfolio Allocation")
+    fig, ax = plt.subplots()
+    cmap = plt.get_cmap('Greens')
+    colors = cmap(np.linspace(0.3, 0.7, len(sorted_tickers)))
 
-    except Exception as e:
-        st.error(f"Error fetching stock data: {e}")
+    # Labels for only large percentages (≥ 10%)
+    labels = [f"{ticker} {w*100:.1f}%" if w >= 0.1 else "" for ticker, w in zip(sorted_tickers, sorted_weights)]
+    ax.pie(sorted_weights, labels=labels, startangle=140, colors=colors)
 
+    # Legend with Ordered Values
+    legend_labels = [f"{ticker}: {w*100:.1f}%" for ticker, w in zip(sorted_tickers, sorted_weights)]
+    ax.legend(legend_labels, title="Stock Allocations", loc="center left", bbox_to_anchor=(1, 0.5))
+    ax.axis('equal')
+    st.pyplot(fig)
+
+    # Allocation Breakdown
+    st.markdown("<b>Portfolio Breakdown</b>", unsafe_allow_html=True)
+    st.write("These are the optimized allocations for your investment:")
+
+    allocation = pd.DataFrame({
+        'Ticker': sorted_tickers,
+        'Allocation (%)': np.round(sorted_weights * 100, 2),
+        'Amount ($)': np.round(sorted_weights * principal, 2)
+    })
+    st.dataframe(allocation)
+
+    # Save the input + results to session state for review log
+    st.session_state.review_log.insert(0, {
+        "Tickers": tickers,
+        "Principal": principal,
+        "Allocation": allocation
+    })
+
+    # Efficient Frontier & Risk-Return Graph
+    st.header("📈 Risk-Return Analysis")
+    results, weights_record = plot_efficient_frontier(returns, risk_free_rate)
+    max_sharpe_idx = np.argmax(results[2])
+    sdp, rp = results[0, max_sharpe_idx], results[1, max_sharpe_idx]
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    scatter = ax.scatter(results[0, :], results[1, :], c=results[2, :], cmap='Blues', marker='o')
+    ax.scatter(sdp, rp, marker='*', color='r', s=200, label='Max Sharpe Ratio Portfolio')
+    ax.set_xlabel('Risk (Volatility)')
+    ax.set_ylabel('Expected Return')
+    ax.legend()
+    plt.colorbar(scatter, label='Sharpe Ratio')
+    st.pyplot(fig)
+
+# Explanation of Markowitz Theory & Sharpe Ratio
+    st.header("📊 Understanding Your Portfolio")
+    st.write(
+        "This portfolio is optimized using **Markowitz Modern Portfolio Theory (MPT)**, "
+        "which finds the best combination of stocks to maximize return while minimizing risk. "
+        "The **Efficient Frontier graph** above shows different portfolios' risk-return tradeoff."
+    )
+   
+    st.write(
+        "The **Sharpe Ratio** measures how much excess return you earn per unit of risk. "
+        "A **higher Sharpe Ratio** means a better risk-adjusted return:"
+    )
+    st.markdown(
+        "- 🔴 **< 1.0:** Weak risk-adjusted returns\n"
+        "- 🟡 **1.0 - 2.0:** Moderate returns\n"
+        "- 🟢 **> 2.0:** Strong risk-adjusted returns"
+    )
+
+
+    st.markdown(
+        "Your portfolio's **Sharpe Ratio** is **{:.2f}**, which indicates its expected performance.".format(optimized_sharpe_ratio)
+    )
+
+
+# Sidebar Review Log
+st.sidebar.header("📜 Review Log")
+with st.sidebar.expander("View All Previous Allocations", expanded=False):
+    for i, entry in enumerate(st.session_state.review_log, start=1):
+        st.write(f"### 📌 Entry {len(st.session_state.review_log) - i + 1}:")
+        st.write(f"**Tickers:** {entry['Tickers']}")
+        st.write(f"**Principal:** ${entry['Principal']}")
+        st.dataframe(entry["Allocation"])
+        st.markdown("---")
+
+# Footer
 st.write("---")
-st.write("Developed by: Paige Spencer, Ian Ortega, Nabil Othman, Chris Giamis")
+st.markdown("<div style='text-align: center;'>Developed by: Paige Spencer, Ian Ortega, Nabil Othman, Chris Giamis</div>", unsafe_allow_html=True)
